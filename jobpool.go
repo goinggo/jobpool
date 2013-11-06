@@ -101,10 +101,10 @@ package jobpool
 import (
 	"container/list"
 	"fmt"
+	"log"
 	"runtime"
 	"sync"
 	"sync/atomic"
-	"time"
 )
 
 //** NEW TYPES
@@ -145,6 +145,12 @@ type Jobber interface {
 
 //** PUBLIC FUNCTIONS
 
+// init is called when the system is inited
+func init() {
+	log.SetPrefix("TRACE: ")
+	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
+}
+
 // New creates a new JobPool
 //  numberOfRoutines: Sets the number of job routines that are allowed to process jobs concurrently
 //  queueCapacity: Sets the maximum number of pending work objects that can be in queue
@@ -182,10 +188,10 @@ func New(numberOfRoutines int, queueCapacity int32) (jobPool *JobPool) {
 
 // Shutdown will release resources and shutdown all processing
 func (this *JobPool) Shutdown(goRoutine string) (err error) {
-	defer catchPanic(&err, goRoutine, "jobPool.JobPool", "Shutdown")
+	defer catchPanic(&err, goRoutine, "Shutdown")
 
-	writeStdout(goRoutine, "jobPool.JobPool", "Shutdown", "Started")
-	writeStdout(goRoutine, "jobPool.JobPool", "Shutdown", "Queue Routine")
+	writeStdout(goRoutine, "Shutdown", "Started")
+	writeStdout(goRoutine, "Shutdown", "Queue Routine")
 
 	this.shutdownQueueChannel <- "Shutdown"
 	<-this.shutdownQueueChannel
@@ -194,7 +200,7 @@ func (this *JobPool) Shutdown(goRoutine string) (err error) {
 	close(this.queueChannel)
 	close(this.dequeueChannel)
 
-	writeStdout(goRoutine, "jobPool.JobPool", "Shutdown", "Shutting Down Job Routines")
+	writeStdout(goRoutine, "Shutdown", "Shutting Down Job Routines")
 
 	// Close the channel to shut things down
 	close(this.shutdownJobChannel)
@@ -202,7 +208,7 @@ func (this *JobPool) Shutdown(goRoutine string) (err error) {
 
 	close(this.jobChannel)
 
-	writeStdout(goRoutine, "jobPool.JobPool", "Shutdown", "Completed")
+	writeStdout(goRoutine, "Shutdown", "Completed")
 	return err
 }
 
@@ -210,7 +216,7 @@ func (this *JobPool) Shutdown(goRoutine string) (err error) {
 //  jober: An object that implements the Jobber interface
 //  priority: If true the job is placed in the priority queue
 func (this *JobPool) QueueJob(goRoutine string, jober Jobber, priority bool) (err error) {
-	defer catchPanic(&err, goRoutine, "jobPool.JobPool", "QueueJob")
+	defer catchPanic(&err, goRoutine, "QueueJob")
 
 	// Create the job object to queue
 	jobPool := &queueJob{
@@ -243,14 +249,14 @@ func (this *JobPool) ActiveRoutines() int32 {
 
 // catchPanic is used to catch any Panic and log exceptions to Stdout. It will also write the stack trace
 //  err: A reference to the err variable to be returned to the caller. Can be nil
-func catchPanic(err *error, goRoutine string, namespace string, functionName string) {
+func catchPanic(err *error, goRoutine string, functionName string) {
 	if r := recover(); r != nil {
 
 		// Capture the stack trace
 		buf := make([]byte, 10000)
 		runtime.Stack(buf, false)
 
-		writeStdoutf(goRoutine, namespace, functionName, "PANIC Defered [%v] : Stack Trace : %v", r, string(buf))
+		writeStdoutf(goRoutine, functionName, "PANIC Defered [%v] : Stack Trace : %v", r, string(buf))
 
 		if err != nil {
 			*err = fmt.Errorf("%v", r)
@@ -259,13 +265,13 @@ func catchPanic(err *error, goRoutine string, namespace string, functionName str
 }
 
 // writeStdout is used to write a system message directly to stdout
-func writeStdout(goRoutine string, namespace string, functionName string, message string) {
-	fmt.Printf("%s : %s : %s : %s : %s\n", time.Now().Format("2006-01-02T15:04:05.000"), goRoutine, namespace, functionName, message)
+func writeStdout(goRoutine string, functionName string, message string) {
+	log.Printf("%s : %s : %s\n", goRoutine, functionName, message)
 }
 
 // writeStdoutf is used to write a formatted system message directly stdout
-func writeStdoutf(goRoutine string, namespace string, functionName string, format string, a ...interface{}) {
-	writeStdout(goRoutine, namespace, functionName, fmt.Sprintf(format, a...))
+func writeStdoutf(goRoutine string, functionName string, format string, a ...interface{}) {
+	writeStdout(goRoutine, functionName, fmt.Sprintf(format, a...))
 }
 
 //** PRIVATE MEMBER FUNCTIONS
@@ -276,7 +282,7 @@ func (this *JobPool) queueRoutine() {
 
 		select {
 		case <-this.shutdownQueueChannel:
-			writeStdout("Queue", "jobpool.JobPool", "queueRoutine", "Going Down")
+			writeStdout("Queue", "queueRoutine", "Going Down")
 
 			this.shutdownQueueChannel <- "Down"
 			return
@@ -296,7 +302,7 @@ func (this *JobPool) queueRoutine() {
 
 // queueRoutineEnqueue places a job on either the normal or priority queue
 func (this *JobPool) queueRoutineEnqueue(queueJob *queueJob) {
-	defer catchPanic(nil, "Queue", "jobPool.JobPool", "queueRoutineEnqueue")
+	defer catchPanic(nil, "Queue", "queueRoutineEnqueue")
 
 	// If the queue is at capacity don't add it
 	if atomic.AddInt32(&this.queuedJobs, 0) == this.queueCapacity {
@@ -322,7 +328,7 @@ func (this *JobPool) queueRoutineEnqueue(queueJob *queueJob) {
 
 // queueRoutineDequeue remove a job from the queue
 func (this *JobPool) queueRoutineDequeue(dequeueJob *dequeueJob) {
-	defer catchPanic(nil, "Queue", "jobPool.JobPool", "queueRoutineDequeue")
+	defer catchPanic(nil, "Queue", "queueRoutineDequeue")
 
 	var nextJob *list.Element
 
@@ -351,7 +357,7 @@ func (this *JobPool) jobRoutine(jobRoutine int) {
 		select {
 		// Shutdown the job routine
 		case <-this.shutdownJobChannel:
-			writeStdout(fmt.Sprintf("JobRoutine %d", jobRoutine), "jobPool.JobPool", "jobRoutine", "Going Down")
+			writeStdout(fmt.Sprintf("JobRoutine %d", jobRoutine), "jobRoutine", "Going Down")
 
 			this.shutdownWaitGroup.Done()
 			return
@@ -366,7 +372,7 @@ func (this *JobPool) jobRoutine(jobRoutine int) {
 
 // dequeueJob pulls a job from the queue
 func (this *JobPool) dequeueJob() (job *queueJob, err error) {
-	defer catchPanic(&err, "jobRoutine", "jobPool.JobPool", "dequeueJob")
+	defer catchPanic(&err, "jobRoutine", "dequeueJob")
 
 	// Create the job object to queue
 	requestJob := &dequeueJob{
@@ -385,7 +391,7 @@ func (this *JobPool) dequeueJob() (job *queueJob, err error) {
 // doJobSafely will executes the job within a safe context
 //  jobRoutine: The internal id of the job routine
 func (this *JobPool) doJobSafely(jobRoutine int) {
-	defer catchPanic(nil, "jobRoutine", "jobPool.JobPool", "doJobSafely")
+	defer catchPanic(nil, "jobRoutine", "doJobSafely")
 	defer func() {
 		atomic.AddInt32(&this.activeRoutines, -1)
 	}()
