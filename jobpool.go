@@ -107,13 +107,20 @@ import (
 	"sync/atomic"
 )
 
+//** INTERFACES
+
+// Jobber is an interface that is implemented to run jobs
+type Jobber interface {
+	RunJob(jobRoutine int)
+}
+
 //** NEW TYPES
 
 // queueJob is a control structure for queuing jobs
 type queueJob struct {
 	Jobber                   // The object to execute the job routine against
-	Priority      bool       // If the job needs to be placed on the priority queue
-	ResultChannel chan error // Used to inform the queue operaion is complete
+	priority      bool       // If the job needs to be placed on the priority queue
+	resultChannel chan error // Used to inform the queue operaion is complete
 }
 
 // dequeueJob is a control structure for dequeuing jobs
@@ -134,13 +141,6 @@ type JobPool struct {
 	queuedJobs           int32            // The number of pending jobs in queued
 	activeRoutines       int32            // The number of routines active
 	queueCapacity        int32            // The max number of jobs we can store in the queue
-}
-
-//** INTERFACES
-
-// Jobber is an interface that is implemented to run jobs
-type Jobber interface {
-	RunJob(jobRoutine int)
 }
 
 //** PUBLIC FUNCTIONS
@@ -225,11 +225,11 @@ func (this *JobPool) QueueJob(goRoutine string, jober Jobber, priority bool) (er
 		make(chan error), // Result Channel
 	}
 
-	defer close(jobPool.ResultChannel)
+	defer close(jobPool.resultChannel)
 
 	// Queue the job
 	this.queueChannel <- jobPool
-	err = <-jobPool.ResultChannel
+	err = <-jobPool.resultChannel
 
 	return err
 }
@@ -306,11 +306,11 @@ func (this *JobPool) queueRoutineEnqueue(queueJob *queueJob) {
 
 	// If the queue is at capacity don't add it
 	if atomic.AddInt32(&this.queuedJobs, 0) == this.queueCapacity {
-		queueJob.ResultChannel <- fmt.Errorf("Job Pool At Capacity")
+		queueJob.resultChannel <- fmt.Errorf("Job Pool At Capacity")
 		return
 	}
 
-	if queueJob.Priority == true {
+	if queueJob.priority == true {
 		this.priorityJobQueue.PushBack(queueJob)
 	} else {
 		this.normalJobQueue.PushBack(queueJob)
@@ -320,7 +320,7 @@ func (this *JobPool) queueRoutineEnqueue(queueJob *queueJob) {
 	atomic.AddInt32(&this.queuedJobs, 1)
 
 	// Tell the caller the work is queued
-	queueJob.ResultChannel <- nil
+	queueJob.resultChannel <- nil
 
 	// Tell the job routine to wake up
 	this.jobChannel <- "Wake Up"
