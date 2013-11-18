@@ -107,6 +107,37 @@ import (
 	"sync/atomic"
 )
 
+//** TYPES
+
+type (
+	// queueJob is a control structure for queuing jobs
+	queueJob struct {
+		Jobber                   // The object to execute the job routine against
+		priority      bool       // If the job needs to be placed on the priority queue
+		resultChannel chan error // Used to inform the queue operaion is complete
+	}
+
+	// dequeueJob is a control structure for dequeuing jobs
+	dequeueJob struct {
+		ResultChannel chan *queueJob // Used to return the queued job to be processed
+	}
+
+	// JobPool maintains queues and Go routines for processing jobs
+	JobPool struct {
+		priorityJobQueue     *list.List       // The priority job queue
+		normalJobQueue       *list.List       // The normal job queue
+		queueChannel         chan *queueJob   // Channel allows the thread safe placement of jobs into the queue
+		dequeueChannel       chan *dequeueJob // Channel allows the thread safe removal of jobs from the queue
+		shutdownQueueChannel chan string      // Channel used to shutdown the queue routine
+		jobChannel           chan string      // Channel to signal to a job routine to process a job
+		shutdownJobChannel   chan struct{}    // Channel used to shutdown the job routines
+		shutdownWaitGroup    sync.WaitGroup   // The WaitGroup for shutting down existing routines
+		queuedJobs           int32            // The number of pending jobs in queued
+		activeRoutines       int32            // The number of routines active
+		queueCapacity        int32            // The max number of jobs we can store in the queue
+	}
+)
+
 //** INTERFACES
 
 // Jobber is an interface that is implemented to run jobs
@@ -114,42 +145,15 @@ type Jobber interface {
 	RunJob(jobRoutine int)
 }
 
-//** NEW TYPES
-
-// queueJob is a control structure for queuing jobs
-type queueJob struct {
-	Jobber                   // The object to execute the job routine against
-	priority      bool       // If the job needs to be placed on the priority queue
-	resultChannel chan error // Used to inform the queue operaion is complete
-}
-
-// dequeueJob is a control structure for dequeuing jobs
-type dequeueJob struct {
-	ResultChannel chan *queueJob // Used to return the queued job to be processed
-}
-
-// JobPool maintains queues and Go routines for processing jobs
-type JobPool struct {
-	priorityJobQueue     *list.List       // The priority job queue
-	normalJobQueue       *list.List       // The normal job queue
-	queueChannel         chan *queueJob   // Channel allows the thread safe placement of jobs into the queue
-	dequeueChannel       chan *dequeueJob // Channel allows the thread safe removal of jobs from the queue
-	shutdownQueueChannel chan string      // Channel used to shutdown the queue routine
-	jobChannel           chan string      // Channel to signal to a job routine to process a job
-	shutdownJobChannel   chan struct{}    // Channel used to shutdown the job routines
-	shutdownWaitGroup    sync.WaitGroup   // The WaitGroup for shutting down existing routines
-	queuedJobs           int32            // The number of pending jobs in queued
-	activeRoutines       int32            // The number of routines active
-	queueCapacity        int32            // The max number of jobs we can store in the queue
-}
-
-//** PUBLIC FUNCTIONS
+//** INIT FUNCTION
 
 // init is called when the system is inited
 func init() {
 	log.SetPrefix("TRACE: ")
 	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
 }
+
+//** PUBLIC FUNCTIONS
 
 // New creates a new JobPool
 //  numberOfRoutines: Sets the number of job routines that are allowed to process jobs concurrently
