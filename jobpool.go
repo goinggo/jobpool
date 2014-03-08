@@ -1,5 +1,5 @@
 // Copyright 2013 Ardan Studios. All rights reserved.
-// Use of this source code is governed by a BSD-style
+// Use of jobPool source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
 /*
@@ -46,22 +46,22 @@
 		    Name string
 		}
 
-		func (this *WorkProvider1) RunJob(jobRoutine int) {
+		func (jobPool *WorkProvider1) RunJob(jobRoutine int) {
 
-		    fmt.Printf("Perform Job : Provider 1 : Started: %s\n", this.Name)
+		    fmt.Printf("Perform Job : Provider 1 : Started: %s\n", jobPool.Name)
 		    time.Sleep(2 * time.Second)
-		    fmt.Printf("Perform Job : Provider 1 : DONE: %s\n", this.Name)
+		    fmt.Printf("Perform Job : Provider 1 : DONE: %s\n", jobPool.Name)
 		}
 
 		type WorkProvider2 struct {
 		    Name string
 		}
 
-		func (this *WorkProvider2) RunJob(jobRoutine int) {
+		func (jobPool *WorkProvider2) RunJob(jobRoutine int) {
 
-		    fmt.Printf("Perform Job : Provider 2 : Started: %s\n", this.Name)
+		    fmt.Printf("Perform Job : Provider 2 : Started: %s\n", jobPool.Name)
 		    time.Sleep(5 * time.Second)
-		    fmt.Printf("Perform Job : Provider 2 : DONE: %s\n", this.Name)
+		    fmt.Printf("Perform Job : Provider 2 : DONE: %s\n", jobPool.Name)
 		}
 
 		func main() {
@@ -191,26 +191,26 @@ func New(numberOfRoutines int, queueCapacity int32) (jobPool *JobPool) {
 //** PUBLIC MEMBER FUNCTIONS
 
 // Shutdown will release resources and shutdown all processing
-func (this *JobPool) Shutdown(goRoutine string) (err error) {
+func (jobPool *JobPool) Shutdown(goRoutine string) (err error) {
 	defer catchPanic(&err, goRoutine, "Shutdown")
 
 	writeStdout(goRoutine, "Shutdown", "Started")
 	writeStdout(goRoutine, "Shutdown", "Queue Routine")
 
-	this.shutdownQueueChannel <- "Shutdown"
-	<-this.shutdownQueueChannel
+	jobPool.shutdownQueueChannel <- "Shutdown"
+	<-jobPool.shutdownQueueChannel
 
-	close(this.shutdownQueueChannel)
-	close(this.queueChannel)
-	close(this.dequeueChannel)
+	close(jobPool.shutdownQueueChannel)
+	close(jobPool.queueChannel)
+	close(jobPool.dequeueChannel)
 
 	writeStdout(goRoutine, "Shutdown", "Shutting Down Job Routines")
 
 	// Close the channel to shut things down
-	close(this.shutdownJobChannel)
-	this.shutdownWaitGroup.Wait()
+	close(jobPool.shutdownJobChannel)
+	jobPool.shutdownWaitGroup.Wait()
 
-	close(this.jobChannel)
+	close(jobPool.jobChannel)
 
 	writeStdout(goRoutine, "Shutdown", "Completed")
 	return err
@@ -219,34 +219,34 @@ func (this *JobPool) Shutdown(goRoutine string) (err error) {
 // QueueJob queues a job to be processed
 //  jober: An object that implements the Jobber interface
 //  priority: If true the job is placed in the priority queue
-func (this *JobPool) QueueJob(goRoutine string, jober Jobber, priority bool) (err error) {
+func (jobPool *JobPool) QueueJob(goRoutine string, jober Jobber, priority bool) (err error) {
 	defer catchPanic(&err, goRoutine, "QueueJob")
 
 	// Create the job object to queue
-	jobPool := &queueJob{
+	job := &queueJob{
 		jober,            // Jobber Interface
 		priority,         // Priority
 		make(chan error), // Result Channel
 	}
 
-	defer close(jobPool.resultChannel)
+	defer close(job.resultChannel)
 
 	// Queue the job
-	this.queueChannel <- jobPool
-	err = <-jobPool.resultChannel
+	jobPool.queueChannel <- job
+	err = <-job.resultChannel
 
 	return err
 }
 
 // QueuedJobs will return the number of jobs items in queue
-func (this *JobPool) QueuedJobs() int32 {
-	return atomic.AddInt32(&this.queuedJobs, 0)
+func (jobPool *JobPool) QueuedJobs() int32 {
+	return atomic.AddInt32(&jobPool.queuedJobs, 0)
 }
 
 // ActiveRoutines will return the number of routines performing work
-func (this *JobPool) ActiveRoutines() int32 {
+func (jobPool *JobPool) ActiveRoutines() int32 {
 
-	return atomic.AddInt32(&this.activeRoutines, 0)
+	return atomic.AddInt32(&jobPool.activeRoutines, 0)
 }
 
 //** PRIVATE FUNCTIONS
@@ -281,101 +281,101 @@ func writeStdoutf(goRoutine string, functionName string, format string, a ...int
 //** PRIVATE MEMBER FUNCTIONS
 
 // queueRoutine performs the thread safe queue related processing
-func (this *JobPool) queueRoutine() {
+func (jobPool *JobPool) queueRoutine() {
 	for {
 
 		select {
-		case <-this.shutdownQueueChannel:
+		case <-jobPool.shutdownQueueChannel:
 			writeStdout("Queue", "queueRoutine", "Going Down")
 
-			this.shutdownQueueChannel <- "Down"
+			jobPool.shutdownQueueChannel <- "Down"
 			return
 
-		case queueJob := <-this.queueChannel:
+		case queueJob := <-jobPool.queueChannel:
 			// Enqueue the job
-			this.queueRoutineEnqueue(queueJob)
+			jobPool.queueRoutineEnqueue(queueJob)
 			break
 
-		case dequeueJob := <-this.dequeueChannel:
+		case dequeueJob := <-jobPool.dequeueChannel:
 			// Dequeue a job
-			this.queueRoutineDequeue(dequeueJob)
+			jobPool.queueRoutineDequeue(dequeueJob)
 			break
 		}
 	}
 }
 
 // queueRoutineEnqueue places a job on either the normal or priority queue
-func (this *JobPool) queueRoutineEnqueue(queueJob *queueJob) {
+func (jobPool *JobPool) queueRoutineEnqueue(queueJob *queueJob) {
 	defer catchPanic(nil, "Queue", "queueRoutineEnqueue")
 
 	// If the queue is at capacity don't add it
-	if atomic.AddInt32(&this.queuedJobs, 0) == this.queueCapacity {
+	if atomic.AddInt32(&jobPool.queuedJobs, 0) == jobPool.queueCapacity {
 		queueJob.resultChannel <- fmt.Errorf("Job Pool At Capacity")
 		return
 	}
 
 	if queueJob.priority == true {
-		this.priorityJobQueue.PushBack(queueJob)
+		jobPool.priorityJobQueue.PushBack(queueJob)
 	} else {
-		this.normalJobQueue.PushBack(queueJob)
+		jobPool.normalJobQueue.PushBack(queueJob)
 	}
 
 	// Increment the queued work count
-	atomic.AddInt32(&this.queuedJobs, 1)
+	atomic.AddInt32(&jobPool.queuedJobs, 1)
 
 	// Tell the caller the work is queued
 	queueJob.resultChannel <- nil
 
 	// Tell the job routine to wake up
-	this.jobChannel <- "Wake Up"
+	jobPool.jobChannel <- "Wake Up"
 }
 
 // queueRoutineDequeue remove a job from the queue
-func (this *JobPool) queueRoutineDequeue(dequeueJob *dequeueJob) {
+func (jobPool *JobPool) queueRoutineDequeue(dequeueJob *dequeueJob) {
 	defer catchPanic(nil, "Queue", "queueRoutineDequeue")
 
 	var nextJob *list.Element
 
-	if this.priorityJobQueue.Len() > 0 {
-		nextJob = this.priorityJobQueue.Front()
-		this.priorityJobQueue.Remove(nextJob)
+	if jobPool.priorityJobQueue.Len() > 0 {
+		nextJob = jobPool.priorityJobQueue.Front()
+		jobPool.priorityJobQueue.Remove(nextJob)
 	} else {
-		nextJob = this.normalJobQueue.Front()
-		this.normalJobQueue.Remove(nextJob)
+		nextJob = jobPool.normalJobQueue.Front()
+		jobPool.normalJobQueue.Remove(nextJob)
 	}
 
 	// Decrement the queued work count
-	atomic.AddInt32(&this.queuedJobs, -1)
+	atomic.AddInt32(&jobPool.queuedJobs, -1)
 
 	// Cast the list element back to a Job
-	jobPool := nextJob.Value.(*queueJob)
+	job := nextJob.Value.(*queueJob)
 
 	// Give the caller the work to process
-	dequeueJob.ResultChannel <- jobPool
+	dequeueJob.ResultChannel <- job
 }
 
 // jobRoutine performs the actual processing of jobs
-func (this *JobPool) jobRoutine(jobRoutine int) {
+func (jobPool *JobPool) jobRoutine(jobRoutine int) {
 	for {
 
 		select {
 		// Shutdown the job routine
-		case <-this.shutdownJobChannel:
+		case <-jobPool.shutdownJobChannel:
 			writeStdout(fmt.Sprintf("JobRoutine %d", jobRoutine), "jobRoutine", "Going Down")
 
-			this.shutdownWaitGroup.Done()
+			jobPool.shutdownWaitGroup.Done()
 			return
 
 		// Perform the work
-		case <-this.jobChannel:
-			this.doJobSafely(jobRoutine)
+		case <-jobPool.jobChannel:
+			jobPool.doJobSafely(jobRoutine)
 			break
 		}
 	}
 }
 
 // dequeueJob pulls a job from the queue
-func (this *JobPool) dequeueJob() (job *queueJob, err error) {
+func (jobPool *JobPool) dequeueJob() (job *queueJob, err error) {
 	defer catchPanic(&err, "jobRoutine", "dequeueJob")
 
 	// Create the job object to queue
@@ -386,7 +386,7 @@ func (this *JobPool) dequeueJob() (job *queueJob, err error) {
 	defer close(requestJob.ResultChannel)
 
 	// Dequeue the job
-	this.dequeueChannel <- requestJob
+	jobPool.dequeueChannel <- requestJob
 	job = <-requestJob.ResultChannel
 
 	return job, err
@@ -394,17 +394,17 @@ func (this *JobPool) dequeueJob() (job *queueJob, err error) {
 
 // doJobSafely will executes the job within a safe context
 //  jobRoutine: The internal id of the job routine
-func (this *JobPool) doJobSafely(jobRoutine int) {
+func (jobPool *JobPool) doJobSafely(jobRoutine int) {
 	defer catchPanic(nil, "jobRoutine", "doJobSafely")
 	defer func() {
-		atomic.AddInt32(&this.activeRoutines, -1)
+		atomic.AddInt32(&jobPool.activeRoutines, -1)
 	}()
 
 	// Update the active routine count
-	atomic.AddInt32(&this.activeRoutines, 1)
+	atomic.AddInt32(&jobPool.activeRoutines, 1)
 
 	// Dequeue a job
-	queueJob, err := this.dequeueJob()
+	queueJob, err := jobPool.dequeueJob()
 
 	if err != nil {
 		writeStdoutf("Queue", "jobpool.JobPool", "doJobSafely", "ERROR : %s", err)
